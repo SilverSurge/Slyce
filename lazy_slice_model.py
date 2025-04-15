@@ -85,24 +85,39 @@ class LazySliceModel:
 
         # case 1: active slice id is None, basically nothing has been started
         if self.active_slice_id is None:
+
             try:
                 cls, kwargs = self.slice_constructors[slice_id]
                 slice_model = cls(**kwargs).to('cpu')
-                self.logger.info(f"Instantiated slice {slice_id} in CPU.")
+                self.logger.info(f"set_slice_id: instantiated slice {slice_id} in CPU.")
+
             except Exception as e:
-                self.logger.info("set_slice_id: error on creating instantiating slice in CPU.")
+                self.logger.info(f"set_slice_id: error on instantiating slice {slice_id} in CPU.")
                 self.logger.info(f"error msg: {e}")
 
             # case 1a: gpu_access is false
-            if gpu_access == False:
+            if self.gpu_access == False:
+
+                # update active slice and active slice id
                 self.active_slice = slice_model
                 self.active_slice_id = slice_id
 
                 # update memory information
-                self.cpu_memory_usage += _estimate_tensor_memory(self.active_slice)
+                self.cpu_memory_usage += self._estimate_tensor_memory(self.active_slice)
 
-                # TODO: verify if it is in the limit if not then offload it.
-                # log if offloaded, or success ful
+                # enforce the cpu memory limits
+                if self.cpu_memory_usage > self.cpu_limit_mb:
+                    # offload slice
+                    self.offload_slice(self.active_slice_id)
+
+                    # log  
+                    self.logger.info("set_slice_id: CPU memory limit exceeded, offloading the slice {self.active_slice_id}.")
+                    
+                    # update active slice and active slice id
+                    self.active_slice = None 
+                    self.active_slice_id = None
+                else:
+                    self.logger.info(f"set_slice_id: slice {self.active_slice_id} initialization complete [CPU].")
 
             # case 1b: gpu_access is true
             else:
@@ -112,15 +127,23 @@ class LazySliceModel:
                     self.active_slice = slice_model
                     self.active_slice_id = slice_id
 
-                    # TODO: verify if it is in the limit if not then offload it.
-                    # log if offloaded, or successful
+                    # update memory information
+                    self.gpu_memory_usage += self._estimate_tensor_memory(self.active_slice)
+
+                    # enforce the gpu memory limits
+                    if self.gpu_memory_usage > self.gpu_limit_mb:
+                        # offload slice, this will go to cpu
+                        self.offload_slice(self.active_slice_id)
+                        # log  
+                        self.logger.info("set_slice_id: GPU memory limit exceeded, offloading the slice {self.active_slice_id} to CPU.")
+
+                        # TODO enforce cpu limit
+                    else:
+                        self.logger.info(f"set_slice_id: slice {self.active_slice_id} initialization complete [GPU].")
 
                 except Exception as e:
-                    self.logger.info("set_slice_id: error on sending slice to GPU.")
-                    self.logger.info(e"error msg: {e}")
-                    # active_slice and active_slice_id are none
-
-                    # TODO: clear the torch cache
+                    self.logger.info("set_slice_id: error while sending slice to GPU.")
+                    self.logger.info("error msg: {e}")
 
         # case 2: active slice id is not none, there was someone before this
         else:
@@ -128,12 +151,18 @@ class LazySliceModel:
             if self.gpu_access == True:
                 # TODO: 
                 _ = _
+                self.offload_slice(self.active_slice_id)
+                self._enforce_cpu_limit()
+
+                
+                # self.active_slice_id = None 
+                # self.active_slice = None 
+
+
             # case 2b: gpu_access is false
             else:
-                # TODO:
-                _ = _
-
-            
+                self.offload_slice(self.active_slice_id)
+                self.set_slice_id(slice_id)
 
     def _estimate_tensor_memory(self, model: torch.nn.Module) -> float:
         """
@@ -150,7 +179,12 @@ class LazySliceModel:
             method to move a slice, GPU to CPU, CPU to Disk.
         args:
             slice_id: id of the slice to offload.
+        note:
+            also handles the cpu_memory_usage and gpu_memory_usage variables
         """
+        _ = _
+
+
 
         
         
